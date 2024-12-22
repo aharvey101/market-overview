@@ -9,6 +9,19 @@
 	type Timeframe = (typeof timeframes)[number];
 	const STREAMS_PER_CONNECTION = 200; // Safe limit to stay well under the 1024 max
 
+	type SortOption =
+		| 'symbol'
+		| 'symbol-desc'
+		| '5m'
+		| '5m-desc'
+		| '15m'
+		| '15m-desc'
+		| '30m'
+		| '30m-desc'
+		| '1h'
+		| '1h-desc';
+	let currentSort: SortOption = 'symbol';
+
 	async function initializeWebSockets() {
 		try {
 			// Fetch available pairs
@@ -89,30 +102,27 @@
 					const data = JSON.parse(event.data);
 
 					// Combined stream events are wrapped as {"stream":"<streamName>","data":<rawPayload>}
-					if (data.data && data.data.e === 'kline') {
-						const k = data.data.k;
-						// Only update if it's the final kline update for the interval
-						if (k.x) {
-							updateMarketData(data.data.s, {
-								t: k.t,
-								T: k.T,
-								s: k.s,
-								i: k.i,
-								f: k.f,
-								L: k.L,
-								o: k.o,
-								c: k.c,
-								h: k.h,
-								l: k.l,
-								v: k.v,
-								n: k.n,
-								x: k.x,
-								q: k.q,
-								V: k.V,
-								Q: k.Q
-							});
-						}
-					}
+					// if (data.data && data.data.e === 'kline') {
+					const k = data.data.k;
+					updateMarketData(data.data.s, {
+						t: k.t,
+						T: k.T,
+						s: k.s,
+						i: k.i,
+						f: k.f,
+						L: k.L,
+						o: k.o,
+						c: k.c,
+						h: k.h,
+						l: k.l,
+						v: k.v,
+						n: k.n,
+						x: k.x,
+						q: k.q,
+						V: k.V,
+						Q: k.Q
+					});
+					// }
 				});
 
 				ws.addEventListener('error', (error) => {
@@ -149,11 +159,22 @@
 		websockets.forEach((ws) => ws.close());
 	});
 
-	$: sortedPairs = Object.entries($marketData).sort(([, a], [, b]) => {
-		const aSum = timeframes.reduce((sum, tf) => sum + (parseFloat(a[tf] || '0') || 0), 0);
-		const bSum = timeframes.reduce((sum, tf) => sum + (parseFloat(b[tf] || '0') || 0), 0);
-		return bSum - aSum;
-	});
+	function sortPairs(pairs: [string, any][], sortBy: SortOption): [string, any][] {
+		return [...pairs].sort(([symbolA, dataA], [symbolB, dataB]) => {
+			if (sortBy === 'symbol') return symbolA.localeCompare(symbolB);
+			if (sortBy === 'symbol-desc') return symbolB.localeCompare(symbolA);
+
+			const timeframe = sortBy.replace('-desc', '') as Timeframe;
+			const isDesc = sortBy.endsWith('-desc');
+
+			const valueA = parseFloat(dataA[timeframe] || '0');
+			const valueB = parseFloat(dataB[timeframe] || '0');
+
+			return isDesc ? valueB - valueA : valueA - valueB;
+		});
+	}
+
+	$: sortedPairs = sortPairs(Object.entries($marketData), currentSort);
 
 	function getColorClass(value: string | null): string {
 		if (!value) return '';
@@ -165,7 +186,19 @@
 </script>
 
 <div class="container mx-auto p-4">
-	<h1 class="mb-4 text-2xl font-bold">Crypto Price Movements</h1>
+	<div class="mb-4">
+		<h1 class="mb-2 text-2xl font-bold">Crypto Price Movements</h1>
+		<div class="flex gap-2">
+			<select class="rounded border px-2 py-1" bind:value={currentSort}>
+				<option value="symbol">Symbol (A-Z)</option>
+				<option value="symbol-desc">Symbol (Z-A)</option>
+				{#each timeframes as timeframe}
+					<option value={timeframe}>{timeframe} % Change (Low to High)</option>
+					<option value={`${timeframe}-desc`}>{timeframe} % Change (High to Low)</option>
+				{/each}
+			</select>
+		</div>
+	</div>
 
 	<div class="grid grid-cols-2 gap-4">
 		{#each Array(2) as _, columnIndex}
