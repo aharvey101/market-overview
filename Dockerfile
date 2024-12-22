@@ -12,3 +12,4 @@ RUN bun run build
 EXPOSE 3000
 
 CMD ["bun", "build/index.js"]
+CMD ["bun", "alerts/index.ts"]

@@ -1,5 +1,3 @@
-import type { ServerWebSocket } from 'bun';
-
 interface WebSocketData {
     pairs: string[];
     timeframes: string[];
@@ -12,6 +10,7 @@ interface ServerConfig {
 
 export async function sendTelegramAlert(message: string) {
     try {
+        console.log("SENDING TELEGRAM ALERT", message);
         const url = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`;
         await fetch(url, {
             method: 'POST',
