@@ -10,6 +10,57 @@ const STREAMS_PER_CONNECTION = 200;
 export const marketData: Writable<MarketData> = writable({});
 let websockets: WebSocket[] = [];
 
+async function fetchInitialKlines(pairs: string[], timeframe: string, batchSize = 250) {
+    const results = [];
+    for (let i = 0; i < pairs.length; i += batchSize) {
+        const batch = pairs.slice(i, i + batchSize);
+        const batchResults = await Promise.all(
+            batch.map(async (pair) => {
+                try {
+                    const response = await fetch(
+                        `https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=${timeframe}&limit=1`
+                    );
+                    const klineData = await response.json();
+                    if (klineData && klineData[0]) {
+                        const [openTime, open, high, low, close, volume, closeTime] = klineData[0];
+                        return {
+                            pair,
+                            timeframe,
+                            data: {
+                                t: openTime,
+                                T: closeTime,
+                                s: pair,
+                                i: timeframe,
+                                f: 0,
+                                L: 0,
+                                o: open,
+                                c: close,
+                                h: high,
+                                l: low,
+                                v: volume,
+                                n: 0,
+                                x: true,
+                                q: '0',
+                                V: '0',
+                                Q: '0'
+                            }
+                        };
+                    }
+                } catch (error) {
+                    console.error(`Error fetching initial data for ${pair} ${timeframe}:`, error);
+                }
+                return null;
+            })
+        );
+        results.push(...batchResults.filter(Boolean));
+        // Add a delay between batches
+        if (i + batchSize < pairs.length) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+    }
+    return results;
+}
+
 export async function initializeWebSockets() {
     try {
         // Fetch available pairs
@@ -41,42 +92,19 @@ export async function initializeWebSockets() {
         // Close existing WebSockets if they exist
         closeWebSockets();
 
-        // Fetch initial kline data for each pair and timeframe
-        await Promise.all(
-            usdtPairs.flatMap((pair) =>
-                timeframes.map(async (timeframe) => {
-                    try {
-                        const response = await fetch(
-                            `https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=${timeframe}&limit=1`
-                        );
-                        const klineData = await response.json();
-                        if (klineData && klineData[0]) {
-                            const [openTime, open, high, low, close, volume, closeTime] = klineData[0];
-                            updateMarketData(pair, {
-                                t: openTime,
-                                T: closeTime,
-                                s: pair,
-                                i: timeframe,
-                                f: 0,
-                                L: 0,
-                                o: open,
-                                c: close,
-                                h: high,
-                                l: low,
-                                v: volume,
-                                n: 0,
-                                x: true,
-                                q: '0',
-                                V: '0',
-                                Q: '0'
-                            });
-                        }
-                    } catch (error) {
-                        console.error(`Error fetching initial data for ${pair} ${timeframe}:`, error);
-                    }
-                })
-            )
-        );
+        // Fetch initial kline data for each timeframe with batching
+        for (const timeframe of timeframes) {
+            const results = await fetchInitialKlines(usdtPairs, timeframe);
+            results.forEach(result => {
+                if (result) {
+                    updateMarketData(result.pair, result.data);
+                }
+            });
+            // Add a delay between timeframes
+            if (timeframe !== timeframes[timeframes.length - 1]) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
 
         // Create all stream names
         const allStreams = usdtPairs.flatMap((pair) =>
