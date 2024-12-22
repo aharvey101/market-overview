@@ -1,26 +1,25 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { writable } from 'svelte/store';
-	import type { MarketData } from './types';
+	import type { MarketData, BinanceSymbol, KlineData } from './types';
 
 	const marketData = writable<MarketData>({});
 	let ws: WebSocket | null = null;
 	let timeframes = ['5m', '15m', '30m', '1h'];
 
-	function calculatePercentChange(open: number, close: number) {
-		return (((close - open) / open) * 100).toFixed(2);
-	}
-
 	async function initializeWebSocket() {
 		try {
 			const response = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
 			const data = await response.json();
-			const usdtPairs = data.symbols
-				.filter((symbol: any) => symbol.quoteAsset === 'USDT' && symbol.status === 'TRADING')
-				.map((symbol: any) => symbol.symbol);
+			const usdtPairs: string[] = data.symbols
+				.filter(
+					(symbol: BinanceSymbol) => symbol.quoteAsset === 'USDT' && symbol.status === 'TRADING'
+				)
+				.map((symbol: BinanceSymbol) => symbol.symbol);
 
-			const initialData = {};
-			usdtPairs.forEach((pair) => {
+			// Initialize market data structure
+			const initialData: MarketData = {};
+			usdtPairs.forEach((pair: string) => {
 				initialData[pair] = {
 					'5m': null,
 					'15m': null,
@@ -31,17 +30,18 @@
 			});
 			marketData.set(initialData);
 
-			for (const pair of usdtPairs) {
-				for (const timeframe of timeframes) {
-					fetchKlines(pair, timeframe);
-				}
-			}
-
+			// Set up WebSocket connection for all timeframes
 			ws = new WebSocket('wss://fstream.binance.com/ws');
 
-			const subscribeMsg = {
+			const subscribeMsg: {
+				method: string;
+				params: string[];
+				id: number;
+			} = {
 				method: 'SUBSCRIBE',
-				params: usdtPairs.map((pair) => `${pair.toLowerCase()}@kline_1m`),
+				params: usdtPairs.flatMap((pair) =>
+					timeframes.map((timeframe) => `${pair.toLowerCase()}@kline_${timeframe}`)
+				),
 				id: 1
 			};
 
@@ -64,61 +64,23 @@
 		}
 	}
 
-	async function fetchKlines(pair: string, timeframe: string) {
-		try {
-			const interval = timeframe;
-			const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=${interval}&limit=2`;
-			const response = await fetch(url);
-			const data = await response.json();
-
-			if (data.length >= 2) {
-				const [previousCandle, currentCandle] = data;
-				const percentChange = calculatePercentChange(
-					parseFloat(previousCandle[1]),
-					parseFloat(currentCandle[4])
-				);
-
-				marketData.update((current) => {
-					if (!current[pair]) current[pair] = {};
-					current[pair][timeframe] = percentChange;
-					return current;
-				});
-			}
-		} catch (error) {
-			console.error(`Error fetching klines for ${pair} ${timeframe}:`, error);
-		}
-	}
-
-	function updateMarketData(symbol: string, kline: any) {
+	function updateMarketData(symbol: string, kline: KlineData) {
 		marketData.update((current) => {
 			if (current[symbol]) {
-				current[symbol].lastPrice = parseFloat(kline.c);
+				const timeframe = kline.i;
+				const open = parseFloat(kline.o);
+				const close = parseFloat(kline.c);
+				const percentChange = ((close - open) / open) * 100;
+
+				current[symbol][timeframe] = percentChange.toFixed(2);
+				current[symbol].lastPrice = close;
 			}
 			return current;
 		});
 	}
 
-	function startPeriodicUpdates() {
-		const intervals = {
-			'5m': 5 * 60 * 1000,
-			'15m': 15 * 60 * 1000,
-			'30m': 30 * 60 * 1000,
-			'1h': 60 * 60 * 1000
-		};
-
-		Object.entries(intervals).forEach(([timeframe, interval]) => {
-			setInterval(() => {
-				$marketData &&
-					Object.keys($marketData).forEach((pair) => {
-						fetchKlines(pair, timeframe);
-					});
-			}, interval);
-		});
-	}
-
 	onMount(() => {
 		initializeWebSocket();
-		startPeriodicUpdates();
 	});
 
 	onDestroy(() => {

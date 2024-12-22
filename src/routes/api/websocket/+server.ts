@@ -71,7 +71,7 @@ async function startMonitoring() {
             .map((symbol: any) => symbol.symbol);
 
         // Set up intervals for each timeframe
-        const intervals = {
+        const intervals: Record<string, number> = {
             '5m': 5 * 60 * 1000,
             '15m': 15 * 60 * 1000,
             '30m': 30 * 60 * 1000,
@@ -88,8 +88,8 @@ async function startMonitoring() {
         // Set up periodic updates
         Object.entries(intervals).forEach(([timeframe, interval]) => {
             setInterval(() => {
-                usdtPairs.forEach((pair) => {
-                    fetchKlines(pair, timeframe);
+                usdtPairs.forEach((pair: string) => {
+                    fetchKlines(pair, timeframe as '5m' | '15m' | '30m' | '1h');
                 });
             }, interval);
         });
