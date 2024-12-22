@@ -1,11 +1,17 @@
+/// <reference types="bun-types" />
+
 import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
+import type { ServerWebSocket } from 'bun';
 
 // Store previous values to detect crossings
 const previousValues = new Map();
 const timeframes = ['5m', '15m', '30m', '1h'];
-const STREAMS_PER_CONNECTION = 200;
-let wsConnections: WebSocket[] = [];
+
+interface WebSocketData {
+    pairs: string[];
+    timeframes: string[];
+}
 
 async function sendTelegramAlert(message: string) {
     try {
@@ -44,69 +50,74 @@ function checkThresholdCrossing(symbol: string, timeframe: string, value: number
     }
 }
 
-async function initializeWebSocket() {
-    try {
-        // Close existing connections
-        wsConnections = [];
+const server = Bun.serve<WebSocketData>({
+    port: 3001,
+    fetch(req, server) {
+        const success = server.upgrade(req, {
+            data: {
+                pairs: [],
+                timeframes
+            }
+        });
+        return success
+            ? undefined
+            : new Response('Upgrade failed', { status: 500 });
+    },
+    websocket: {
+        perMessageDeflate: true,
+        maxPayloadLength: 16 * 1024 * 1024, // 16MB
+        idleTimeout: 120, // 2 minutes
+        open(ws) {
+            // Create subscription streams for each pair and timeframe
+            fetch('https://fapi.binance.com/fapi/v1/exchangeInfo')
+                .then(res => res.json())
+                .then(data => {
+                    const usdtPairs = data.symbols
+                        .filter((symbol: any) => symbol.quoteAsset === 'USDT' && symbol.status === 'TRADING')
+                        .map((symbol: any) => symbol.symbol);
 
-        // Fetch available pairs
-        const response = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
-        const data = await response.json();
-        const usdtPairs = data.symbols
-            .filter((symbol: any) => symbol.quoteAsset === 'USDT' && symbol.status === 'TRADING')
-            .map((symbol: any) => symbol.symbol);
+                    // Create all stream names
+                    const allStreams = usdtPairs.flatMap((pair: string) =>
+                        timeframes.map((timeframe) => `${pair.toLowerCase()}@kline_${timeframe}`)
+                    );
 
-        // Create all stream names
-        const allStreams = usdtPairs.flatMap((pair: string) =>
-            timeframes.map((timeframe) => `${pair.toLowerCase()}@kline_${timeframe}`)
-        );
+                    // Subscribe to each stream
+                    allStreams.forEach((stream: string) => {
+                        ws.subscribe(stream);
+                    });
 
-        // Split streams into chunks due to WebSocket limitations
-        for (let i = 0; i < allStreams.length; i += STREAMS_PER_CONNECTION) {
-            const streamChunk = allStreams.slice(i, i + STREAMS_PER_CONNECTION).join('/');
-            const wsUrl = `wss://fstream.binance.com/stream?streams=${streamChunk}`;
-
-            const ws = new WebSocket(wsUrl);
-
-            ws.addEventListener('message', (event) => {
-                try {
-                    const message = JSON.parse(event.data);
-                    if (message.data && message.data.e === 'kline') {
-                        const kline = message.data.k;
-                        const open = parseFloat(kline.o);
-                        const close = parseFloat(kline.c);
-                        const percentChange = ((close - open) / open) * 100;
-                        console.info("CHECKING THRESHOLD CROSSING", message.data.s, kline.i, percentChange);
-                        checkThresholdCrossing(message.data.s, kline.i, percentChange);
-
-                    }
-                } catch (error) {
-                    console.error('Error processing WebSocket message:', error);
+                    // Store pairs in ws.data
+                    ws.data.pairs = usdtPairs;
+                });
+        },
+        message(ws, message) {
+            try {
+                const data = JSON.parse(message as string);
+                if (data.data && data.data.e === 'kline') {
+                    const kline = data.data.k;
+                    const open = parseFloat(kline.o);
+                    const close = parseFloat(kline.c);
+                    const percentChange = ((close - open) / open) * 100;
+                    console.info("CHECKING THRESHOLD CROSSING", data.data.s, kline.i, percentChange);
+                    checkThresholdCrossing(data.data.s, kline.i, percentChange);
                 }
+            } catch (error) {
+                console.error('Error processing WebSocket message:', error);
+            }
+        },
+        close(ws, code, message) {
+            console.log('WebSocket connection closed:', code, message);
+            // Unsubscribe from all streams
+            ws.data.pairs.forEach((pair: string) => {
+                timeframes.forEach(timeframe => {
+                    ws.unsubscribe(`${pair.toLowerCase()}@kline_${timeframe}`);
+                });
             });
-
-            ws.addEventListener('error', (error) => {
-                console.error('WebSocket error:', error);
-                // Attempt to reconnect after a delay
-                setTimeout(() => initializeWebSocket(), 5000);
-            });
-
-            ws.addEventListener('close', () => {
-                console.log('WebSocket connection closed. Reconnecting...');
-                setTimeout(() => initializeWebSocket(), 5000);
-            });
-
-            wsConnections.push(ws);
         }
-    } catch (error) {
-        console.error('Error initializing WebSocket:', error);
-        // Attempt to reconnect after a delay
-        setTimeout(() => initializeWebSocket(), 5000);
     }
-}
+});
 
-// Start the WebSocket connection when the server starts
-initializeWebSocket();
+console.log(`WebSocket server listening on ${server.hostname}:${server.port}`);
 
 // Endpoint just returns success
 export const GET: RequestHandler = async () => {
