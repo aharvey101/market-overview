@@ -1,9 +1,9 @@
 import { writable, type Writable } from 'svelte/store';
 import type { MarketData, BinanceSymbol, KlineData } from '../routes/types';
 
-export const timeframes = ['5m', '15m', '30m', '1h'] as const;
+export const timeframes = ['5m', '15m', '30m', '1h', '2h', '4h', '8h', '1d'] as const;
 export type Timeframe = typeof timeframes[number];
-export type SortOption = 'symbol' | 'symbol-desc' | '5m' | '5m-desc' | '15m' | '15m-desc' | '30m' | '30m-desc' | '1h' | '1h-desc';
+export type SortOption = 'symbol' | 'symbol-desc' | '5m' | '5m-desc' | '15m' | '15m-desc' | '30m' | '30m-desc' | '1h' | '1h-desc' | '2h' | '2h-desc' | '4h' | '4h-desc' | '8h' | '8h-desc' | '1d' | '1d-desc';
 
 const STREAMS_PER_CONNECTION = 200;
 
@@ -29,6 +29,10 @@ export async function initializeWebSockets() {
                 '15m': null,
                 '30m': null,
                 '1h': null,
+                '2h': null,
+                '4h': null,
+                '8h': null,
+                '1d': null,
                 lastPrice: null
             };
         });

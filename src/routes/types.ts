@@ -4,6 +4,10 @@ export interface MarketData {
         '15m': string | null;
         '30m': string | null;
         '1h': string | null;
+        '2h': string | null;
+        '4h': string | null;
+        '8h': string | null;
+        '1d': string | null;
         lastPrice: number | null;
     };
 }
