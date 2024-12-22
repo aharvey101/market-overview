@@ -49,10 +49,8 @@ const server = new BinanceWebSocketServer({
     onThresholdCrossing: checkThresholdCrossing
 });
 
+console.log("SERVER INITIALIZED", server.isInitialized);
 // Endpoint just returns success
 export const GET: RequestHandler = async () => {
-    return new Response(JSON.stringify({
-        status: 'Monitoring active via WebSocket',
-        initialized: server.isInitialized
-    }));
+    return new Response(JSON.stringify({ status: 'Monitoring active via WebSocket' }));
 }; 
