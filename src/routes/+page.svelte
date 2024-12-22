@@ -4,11 +4,14 @@
 	import type { MarketData, BinanceSymbol, KlineData } from './types';
 
 	const marketData = writable<MarketData>({});
-	let ws: WebSocket | null = null;
-	let timeframes = ['5m', '15m', '30m', '1h'];
+	let websockets: WebSocket[] = [];
+	const timeframes = ['5m', '15m', '30m', '1h'] as const;
+	type Timeframe = (typeof timeframes)[number];
+	const STREAMS_PER_CONNECTION = 200; // Safe limit to stay well under the 1024 max
 
-	async function initializeWebSocket() {
+	async function initializeWebSockets() {
 		try {
+			// Fetch available pairs
 			const response = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
 			const data = await response.json();
 			const usdtPairs: string[] = data.symbols
@@ -30,35 +33,94 @@
 			});
 			marketData.set(initialData);
 
-			// Set up WebSocket connection for all timeframes
-			ws = new WebSocket('wss://fstream.binance.com/ws');
+			// Close existing WebSockets if they exist
+			websockets.forEach((ws) => ws.close());
+			websockets = [];
 
-			const subscribeMsg: {
-				method: string;
-				params: string[];
-				id: number;
-			} = {
-				method: 'SUBSCRIBE',
-				params: usdtPairs.flatMap((pair) =>
-					timeframes.map((timeframe) => `${pair.toLowerCase()}@kline_${timeframe}`)
-				),
-				id: 1
-			};
+			// Fetch initial kline data for each pair and timeframe
+			await Promise.all(
+				usdtPairs.flatMap((pair) =>
+					timeframes.map(async (timeframe) => {
+						try {
+							const response = await fetch(
+								`https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=${timeframe}&limit=1`
+							);
+							const klineData = await response.json();
+							if (klineData && klineData[0]) {
+								// Kline data format: [openTime, open, high, low, close, volume, closeTime, ...]
+								const [openTime, open, high, low, close, volume, closeTime] = klineData[0];
+								updateMarketData(pair, {
+									t: openTime,
+									T: closeTime,
+									s: pair,
+									i: timeframe,
+									f: 0,
+									L: 0,
+									o: open,
+									c: close,
+									h: high,
+									l: low,
+									v: volume,
+									n: 0,
+									x: true,
+									q: '0',
+									V: '0',
+									Q: '0'
+								});
+							}
+						} catch (error) {
+							console.error(`Error fetching initial data for ${pair} ${timeframe}:`, error);
+						}
+					})
+				)
+			);
 
-			ws.onopen = () => {
-				ws.send(JSON.stringify(subscribeMsg));
-			};
+			// Create all stream names
+			const allStreams = usdtPairs.flatMap((pair) =>
+				timeframes.map((timeframe) => `${pair.toLowerCase()}@kline_${timeframe}`)
+			);
 
-			ws.onmessage = (event) => {
-				const data = JSON.parse(event.data);
-				if (data.e === 'kline') {
-					updateMarketData(data.s, data.k);
-				}
-			};
+			// Split streams into chunks
+			for (let i = 0; i < allStreams.length; i += STREAMS_PER_CONNECTION) {
+				const streamChunk = allStreams.slice(i, i + STREAMS_PER_CONNECTION).join('/');
+				const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streamChunk}`);
 
-			ws.onerror = (error) => {
-				console.error('WebSocket error:', error);
-			};
+				ws.addEventListener('message', (event) => {
+					const data = JSON.parse(event.data);
+
+					// Combined stream events are wrapped as {"stream":"<streamName>","data":<rawPayload>}
+					if (data.data && data.data.e === 'kline') {
+						const k = data.data.k;
+						// Only update if it's the final kline update for the interval
+						if (k.x) {
+							updateMarketData(data.data.s, {
+								t: k.t,
+								T: k.T,
+								s: k.s,
+								i: k.i,
+								f: k.f,
+								L: k.L,
+								o: k.o,
+								c: k.c,
+								h: k.h,
+								l: k.l,
+								v: k.v,
+								n: k.n,
+								x: k.x,
+								q: k.q,
+								V: k.V,
+								Q: k.Q
+							});
+						}
+					}
+				});
+
+				ws.addEventListener('error', (error) => {
+					console.error('WebSocket error:', error);
+				});
+
+				websockets.push(ws);
+			}
 		} catch (error) {
 			console.error('Error initializing data:', error);
 		}
@@ -66,8 +128,8 @@
 
 	function updateMarketData(symbol: string, kline: KlineData) {
 		marketData.update((current) => {
-			if (current[symbol]) {
-				const timeframe = kline.i;
+			if (current[symbol] && timeframes.includes(kline.i as Timeframe)) {
+				const timeframe = kline.i as Timeframe;
 				const open = parseFloat(kline.o);
 				const close = parseFloat(kline.c);
 				const percentChange = ((close - open) / open) * 100;
@@ -80,18 +142,16 @@
 	}
 
 	onMount(() => {
-		initializeWebSocket();
+		initializeWebSockets();
 	});
 
 	onDestroy(() => {
-		if (ws) {
-			ws.close();
-		}
+		websockets.forEach((ws) => ws.close());
 	});
 
 	$: sortedPairs = Object.entries($marketData).sort(([, a], [, b]) => {
-		const aSum = timeframes.reduce((sum, tf) => sum + (parseFloat(a[tf]) || 0), 0);
-		const bSum = timeframes.reduce((sum, tf) => sum + (parseFloat(b[tf]) || 0), 0);
+		const aSum = timeframes.reduce((sum, tf) => sum + (parseFloat(a[tf] || '0') || 0), 0);
+		const bSum = timeframes.reduce((sum, tf) => sum + (parseFloat(b[tf] || '0') || 0), 0);
 		return bSum - aSum;
 	});
 
