@@ -167,8 +167,8 @@
 <div class="container mx-auto p-4">
 	<h1 class="mb-4 text-2xl font-bold">Crypto Price Movements</h1>
 
-	<div class="grid grid-cols-4 gap-4">
-		{#each Array(4) as _, columnIndex}
+	<div class="grid grid-cols-2 gap-4">
+		{#each Array(2) as _, columnIndex}
 			<div class="overflow-x-auto">
 				<table class="w-full border border-gray-300 bg-white">
 					<thead>
@@ -181,7 +181,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each sortedPairs.slice(columnIndex * Math.ceil(sortedPairs.length / 4), (columnIndex + 1) * Math.ceil(sortedPairs.length / 4)) as [symbol, data]}
+						{#each sortedPairs.slice(columnIndex * Math.ceil(sortedPairs.length / 2), (columnIndex + 1) * Math.ceil(sortedPairs.length / 2)) as [symbol, data]}
 							<tr class="hover:bg-gray-50">
 								<td class="border px-2 py-1 text-sm font-medium">{symbol}</td>
 								<td class="border px-2 py-1 text-right text-xs">
