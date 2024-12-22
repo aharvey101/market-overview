@@ -7,10 +7,16 @@
 		closeWebSockets,
 		sortPairs,
 		getColorClass,
+		fetchPairData,
 		type SortOption
 	} from '$lib/marketData';
 
 	let currentSort: SortOption = 'symbol';
+	let containerHeight: number;
+	let scrollTop = 0;
+	const ROW_HEIGHT = 28;
+	const BUFFER_SIZE = 200;
+	let loadedPairs = new Set<string>();
 
 	onMount(() => {
 		initializeWebSockets();
@@ -21,6 +27,23 @@
 	});
 
 	$: sortedPairs = sortPairs(Object.entries($marketData), currentSort);
+	$: totalHeight = sortedPairs.length * ROW_HEIGHT;
+	$: visibleRows = Math.ceil(containerHeight / ROW_HEIGHT);
+	$: startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER_SIZE);
+	$: endIndex = Math.min(
+		sortedPairs.length,
+		Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + BUFFER_SIZE
+	);
+	$: visiblePairs = sortedPairs.slice(startIndex, endIndex);
+	$: {
+		// Load data for newly visible pairs
+		visiblePairs.forEach(([symbol]) => {
+			if (!loadedPairs.has(symbol)) {
+				loadedPairs.add(symbol);
+				fetchPairData(symbol);
+			}
+		});
+	}
 
 	function downloadMovers(timeframe: string) {
 		const significantPairs = Object.entries($marketData)
@@ -40,6 +63,11 @@
 		a.click();
 		document.body.removeChild(a);
 		URL.revokeObjectURL(url);
+	}
+
+	function handleScroll(event: Event) {
+		const target = event.target as HTMLElement;
+		scrollTop = target.scrollTop;
 	}
 </script>
 
@@ -66,10 +94,15 @@
 		</div>
 	</div>
 
-	<div class="overflow-x-auto">
-		<table class="w-full border border-gray-300 bg-white text-xs">
-			<thead>
-				<tr class="bg-gray-100">
+	<div
+		class="overflow-auto"
+		style="height: 80vh;"
+		bind:clientHeight={containerHeight}
+		on:scroll={handleScroll}
+	>
+		<table class="relative w-full border border-gray-300 bg-white text-xs">
+			<thead class="sticky top-0 z-10 bg-gray-100">
+				<tr>
 					<th class="border px-2 py-1">Symbol</th>
 					{#each timeframes as timeframe}
 						<th class="border px-2 py-1">{timeframe}</th>
@@ -77,7 +110,10 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each sortedPairs as [symbol, data]}
+				{#if startIndex > 0}
+					<tr style="height: {startIndex * ROW_HEIGHT}px;"></tr>
+				{/if}
+				{#each visiblePairs as [symbol, data]}
 					<tr class="hover:bg-gray-50">
 						<td class="border px-2 py-1 font-medium">{symbol}</td>
 						{#each timeframes as timeframe}
@@ -89,6 +125,9 @@
 						{/each}
 					</tr>
 				{/each}
+				{#if endIndex < sortedPairs.length}
+					<tr style="height: {(sortedPairs.length - endIndex) * ROW_HEIGHT}px;"></tr>
+				{/if}
 			</tbody>
 		</table>
 	</div>
@@ -97,5 +136,45 @@
 <style>
 	:global(body) {
 		background-color: #f5f5f5;
+	}
+
+	/* Custom scrollbar styles */
+	.overflow-auto {
+		scrollbar-width: thin;
+		scrollbar-color: rgba(156, 163, 175, 0.3) transparent;
+		scroll-behavior: smooth;
+		-webkit-overflow-scrolling: touch;
+		scroll-snap-type: y proximity;
+		will-change: transform;
+	}
+
+	/* Prevent scroll acceleration */
+	.overflow-auto {
+		overflow-y: scroll;
+		overscroll-behavior-y: none;
+	}
+
+	/* For Webkit browsers (Chrome, Safari) */
+	.overflow-auto::-webkit-scrollbar {
+		width: 4px;
+	}
+
+	.overflow-auto::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.overflow-auto::-webkit-scrollbar-thumb {
+		background-color: rgba(156, 163, 175, 0.3);
+		border-radius: 20px;
+		transition: all 0.3s ease;
+	}
+
+	.overflow-auto::-webkit-scrollbar-thumb:hover {
+		background-color: rgba(156, 163, 175, 0.5);
+	}
+
+	/* Add smooth transitions to rows */
+	tr {
+		transition: background-color 0.2s ease;
 	}
 </style>

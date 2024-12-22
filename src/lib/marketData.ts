@@ -10,7 +10,28 @@ const STREAMS_PER_CONNECTION = 200;
 export const marketData: Writable<MarketData> = writable({});
 let websockets: WebSocket[] = [];
 
-async function fetchInitialKlines(pairs: string[], timeframe: string, batchSize = 250) {
+// Rate limiting queue
+let requestQueue: (() => Promise<void>)[] = [];
+let isProcessingQueue = false;
+const BATCH_SIZE = 100;
+const BATCH_INTERVAL = 100; // 100 milliseconds
+
+async function processQueue() {
+    if (isProcessingQueue) return;
+    isProcessingQueue = true;
+
+    while (requestQueue.length > 0) {
+        const batch = requestQueue.splice(0, BATCH_SIZE);
+        await Promise.all(batch.map(request => request()));
+        if (requestQueue.length > 0) {
+            await new Promise(resolve => setTimeout(resolve, BATCH_INTERVAL));
+        }
+    }
+
+    isProcessingQueue = false;
+}
+
+async function fetchInitialKlines(pairs: string[], timeframe: string, batchSize = 100) {
     const results = [];
     for (let i = 0; i < pairs.length; i += batchSize) {
         const batch = pairs.slice(i, i + batchSize);
@@ -55,10 +76,64 @@ async function fetchInitialKlines(pairs: string[], timeframe: string, batchSize 
         results.push(...batchResults.filter(Boolean));
         // Add a delay between batches
         if (i + batchSize < pairs.length) {
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 10));
         }
     }
     return results;
+}
+
+export async function fetchPairData(pair: string) {
+    return new Promise<void>((resolve) => {
+        const request = async () => {
+            const results = await Promise.all(
+                timeframes.map(async (timeframe) => {
+                    try {
+                        const response = await fetch(
+                            `https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=${timeframe}&limit=1`
+                        );
+                        const klineData = await response.json();
+                        if (klineData && klineData[0]) {
+                            const [openTime, open, high, low, close, volume, closeTime] = klineData[0];
+                            return {
+                                timeframe,
+                                data: {
+                                    t: openTime,
+                                    T: closeTime,
+                                    s: pair,
+                                    i: timeframe,
+                                    f: 0,
+                                    L: 0,
+                                    o: open,
+                                    c: close,
+                                    h: high,
+                                    l: low,
+                                    v: volume,
+                                    n: 0,
+                                    x: true,
+                                    q: '0',
+                                    V: '0',
+                                    Q: '0'
+                                }
+                            };
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching data for ${pair} ${timeframe}:`, error);
+                    }
+                    return null;
+                })
+            );
+
+            results.forEach(result => {
+                if (result) {
+                    updateMarketData(pair, result.data);
+                }
+            });
+            resolve();
+        };
+
+        requestQueue.push(request);
+        processQueue();
+    });
 }
 
 export async function initializeWebSockets() {
@@ -72,7 +147,7 @@ export async function initializeWebSockets() {
             )
             .map((symbol: BinanceSymbol) => symbol.symbol);
 
-        // Initialize market data structure
+        // Initialize market data structure with null values
         const initialData: MarketData = {};
         usdtPairs.forEach((pair: string) => {
             initialData[pair] = {
@@ -91,20 +166,6 @@ export async function initializeWebSockets() {
 
         // Close existing WebSockets if they exist
         closeWebSockets();
-
-        // Fetch initial kline data for each timeframe with batching
-        for (const timeframe of timeframes) {
-            const results = await fetchInitialKlines(usdtPairs, timeframe);
-            results.forEach(result => {
-                if (result) {
-                    updateMarketData(result.pair, result.data);
-                }
-            });
-            // Add a delay between timeframes
-            if (timeframe !== timeframes[timeframes.length - 1]) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-        }
 
         // Create all stream names
         const allStreams = usdtPairs.flatMap((pair) =>
