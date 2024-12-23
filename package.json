@@ -9,8 +9,6 @@
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"start:dev": "bun run dev",
-		"start:alerts": "bun run alerts/index.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.2.3",
