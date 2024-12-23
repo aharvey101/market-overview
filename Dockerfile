@@ -1,14 +1,14 @@
-FROM oven/bun:latest
+FROM node:20-alpine
 
 WORKDIR /app
 
 # Copy source code
 COPY . .
-RUN bun install --frozen-lockfile
+RUN npm install
 
 # Build the application
-RUN bun run build
+RUN npm run build
 
 EXPOSE 3000
 
-CMD ["bun", "build/index.js",]
+CMD ["npm", "run", "start"]
