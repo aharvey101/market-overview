@@ -115,7 +115,16 @@
 				{/if}
 				{#each visiblePairs as [symbol, data]}
 					<tr class="hover:bg-gray-50">
-						<td class="border px-2 py-1 font-medium">{symbol}</td>
+						<td class="border px-2 py-1 font-medium">
+							<a
+								href="https://www.bitget.com/futures/usdt/{symbol}"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-blue-600 hover:text-blue-800"
+							>
+								{symbol}
+							</a>
+						</td>
 						{#each timeframes as timeframe}
 							<td
 								class={`whitespace-nowrap border px-2 py-1 text-right ${getColorClass(data[timeframe])}`}
