@@ -1,15 +1,20 @@
 export interface MarketData {
-    [symbol: string]: {
-        '5m': string | null;
-        '15m': string | null;
-        '30m': string | null;
-        '1h': string | null;
-        '2h': string | null;
-        '4h': string | null;
-        '8h': string | null;
-        '1d': string | null;
-        lastPrice: number | null;
-    };
+    [symbol: string]: TimeframeData;
+}
+
+export interface TimeframeData {
+    '5m': string | null;
+    '15m': string | null;
+    '30m': string | null;
+    '1h': string | null;
+    '2h': string | null;
+    '4h': string | null;
+    '8h': string | null;
+    '12h': string | null;
+    '1d': string | null;
+    '1w': string | null;
+    '1M': string | null;
+    lastPrice: number | null;
 }
 
 export interface KlineData {

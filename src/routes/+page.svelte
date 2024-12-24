@@ -2,7 +2,8 @@
 	import { onMount, onDestroy } from 'svelte';
 	import {
 		marketData,
-		timeframes,
+		shortTimeframes,
+		longTimeframes,
 		initializeWebSockets,
 		closeWebSockets,
 		sortPairs,
@@ -14,17 +15,31 @@
 	let currentSort: SortOption = 'symbol';
 	let containerHeight: number;
 	let scrollTop = 0;
+	let showLongTimeframes = false;
 	const ROW_HEIGHT = 28;
 	const BUFFER_SIZE = 200;
 	let loadedPairs = new Set<string>();
 
+	$: activeTimeframes = showLongTimeframes ? longTimeframes : shortTimeframes;
+
 	onMount(() => {
-		initializeWebSockets();
+		initializeWebSockets(false);
 	});
 
 	onDestroy(() => {
 		closeWebSockets();
 	});
+
+	async function toggleTimeframes() {
+		showLongTimeframes = !showLongTimeframes;
+		if (showLongTimeframes) {
+			await initializeWebSockets(true);
+			// Clear loaded pairs to trigger reload on scroll
+			loadedPairs.clear();
+		} else {
+			loadedPairs.clear();
+		}
+	}
 
 	$: sortedPairs = sortPairs(Object.entries($marketData), currentSort);
 	$: totalHeight = sortedPairs.length * ROW_HEIGHT;
@@ -36,11 +51,10 @@
 	);
 	$: visiblePairs = sortedPairs.slice(startIndex, endIndex);
 	$: {
-		// Load data for newly visible pairs
 		visiblePairs.forEach(([symbol]) => {
 			if (!loadedPairs.has(symbol)) {
 				loadedPairs.add(symbol);
-				fetchPairData(symbol);
+				fetchPairData(symbol, showLongTimeframes);
 			}
 		});
 	}
@@ -78,12 +92,18 @@
 			<select class="rounded border px-2 py-1 text-xs" bind:value={currentSort}>
 				<option value="symbol">Symbol (A-Z)</option>
 				<option value="symbol-desc">Symbol (Z-A)</option>
-				{#each timeframes as timeframe}
+				{#each activeTimeframes as timeframe}
 					<option value={timeframe}>{timeframe} % Change (Low to High)</option>
 					<option value={`${timeframe}-desc`}>{timeframe} % Change (High to Low)</option>
 				{/each}
 			</select>
-			{#each timeframes as timeframe}
+			<button
+				on:click={toggleTimeframes}
+				class="rounded border bg-gray-500 px-2 py-1 text-xs text-white hover:bg-gray-600"
+			>
+				{showLongTimeframes ? 'Show Short Timeframes' : 'Show Long Timeframes'}
+			</button>
+			{#each activeTimeframes as timeframe}
 				<button
 					on:click={() => downloadMovers(timeframe)}
 					class="rounded border bg-blue-500 px-2 py-1 text-xs text-white hover:bg-blue-600"
@@ -104,7 +124,7 @@
 			<thead class="sticky top-0 z-10 bg-gray-100">
 				<tr>
 					<th class="border px-2 py-1">Symbol</th>
-					{#each timeframes as timeframe}
+					{#each activeTimeframes as timeframe}
 						<th class="border px-2 py-1">{timeframe}</th>
 					{/each}
 				</tr>
@@ -125,7 +145,7 @@
 								{symbol}
 							</a>
 						</td>
-						{#each timeframes as timeframe}
+						{#each activeTimeframes as timeframe}
 							<td
 								class={`whitespace-nowrap border px-2 py-1 text-right ${getColorClass(data[timeframe])}`}
 							>

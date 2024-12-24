@@ -1,14 +1,22 @@
 import { writable, type Writable } from 'svelte/store';
 import type { MarketData, BinanceSymbol, KlineData } from '../routes/types';
 
-export const timeframes = ['5m', '15m', '30m', '1h', '2h', '4h', '8h', '1d'] as const;
-export type Timeframe = typeof timeframes[number];
-export type SortOption = 'symbol' | 'symbol-desc' | '5m' | '5m-desc' | '15m' | '15m-desc' | '30m' | '30m-desc' | '1h' | '1h-desc' | '2h' | '2h-desc' | '4h' | '4h-desc' | '8h' | '8h-desc' | '1d' | '1d-desc';
+export const shortTimeframes = ['5m', '15m', '30m', '1h', '2h', '4h'] as const;
+export const longTimeframes = ['8h', '12h', '1d', '1w', '1M'] as const;
+export type ShortTimeframe = typeof shortTimeframes[number];
+export type LongTimeframe = typeof longTimeframes[number];
+export type Timeframe = ShortTimeframe | LongTimeframe;
+export type SortOption =
+    | 'symbol'
+    | 'symbol-desc'
+    | `${Timeframe}`
+    | `${Timeframe}-desc`;
 
 const STREAMS_PER_CONNECTION = 200;
 
 export const marketData: Writable<MarketData> = writable({});
 let websockets: WebSocket[] = [];
+let longTimeframesInitialized = false;
 
 // Rate limiting queue
 let requestQueue: (() => Promise<void>)[] = [];
@@ -31,13 +39,15 @@ async function processQueue() {
     isProcessingQueue = false;
 }
 
-
-
-export async function fetchPairData(pair: string) {
+export async function fetchPairData(pair: string, includeLongTimeframes = false) {
     return new Promise<void>((resolve) => {
         const request = async () => {
+            const timeframesToFetch = includeLongTimeframes
+                ? [...shortTimeframes, ...longTimeframes]
+                : shortTimeframes;
+
             const results = await Promise.all(
-                timeframes.map(async (timeframe) => {
+                timeframesToFetch.map(async (timeframe) => {
                     try {
                         const response = await fetch(
                             `https://fapi.binance.com/fapi/v1/klines?symbol=${pair}&interval=${timeframe}&limit=1`
@@ -87,9 +97,12 @@ export async function fetchPairData(pair: string) {
     });
 }
 
-export async function initializeWebSockets() {
+export async function initializeWebSockets(includeLongTimeframes = false) {
     try {
-        // Fetch available pairs
+        if (includeLongTimeframes && longTimeframesInitialized) {
+            return; // Long timeframes already initialized
+        }
+
         const response = await fetch('https://fapi.binance.com/fapi/v1/exchangeInfo');
         const data = await response.json();
         const usdtPairs: string[] = data.symbols
@@ -98,29 +111,32 @@ export async function initializeWebSockets() {
             )
             .map((symbol: BinanceSymbol) => symbol.symbol);
 
-        // Initialize market data structure with null values
-        const initialData: MarketData = {};
-        usdtPairs.forEach((pair: string) => {
-            initialData[pair] = {
-                '5m': null,
-                '15m': null,
-                '30m': null,
-                '1h': null,
-                '2h': null,
-                '4h': null,
-                '8h': null,
-                '1d': null,
-                lastPrice: null
-            };
-        });
-        marketData.set(initialData);
+        // Only initialize market data if it's empty or we're adding long timeframes
+        if (!longTimeframesInitialized) {
+            const initialData: MarketData = {};
+            usdtPairs.forEach((pair: string) => {
+                initialData[pair] = {
+                    '5m': null,
+                    '15m': null,
+                    '30m': null,
+                    '1h': null,
+                    '2h': null,
+                    '4h': null,
+                    '8h': null,
+                    '12h': null,
+                    '1d': null,
+                    '1w': null,
+                    '1M': null,
+                    lastPrice: null
+                };
+            });
+            marketData.set(initialData);
+        }
 
-        // Close existing WebSockets if they exist
-        closeWebSockets();
-
-        // Create all stream names
+        // Create stream names based on the timeframe set
+        const timeframesToStream = includeLongTimeframes ? longTimeframes : shortTimeframes;
         const allStreams = usdtPairs.flatMap((pair) =>
-            timeframes.map((timeframe) => `${pair.toLowerCase()}@kline_${timeframe}`)
+            timeframesToStream.map((timeframe) => `${pair.toLowerCase()}@kline_${timeframe}`)
         );
 
         // Split streams into chunks
@@ -159,6 +175,10 @@ export async function initializeWebSockets() {
 
             websockets.push(ws);
         }
+
+        if (includeLongTimeframes) {
+            longTimeframesInitialized = true;
+        }
     } catch (error) {
         console.error('Error initializing data:', error);
     }
@@ -166,14 +186,19 @@ export async function initializeWebSockets() {
 
 function updateMarketData(symbol: string, kline: KlineData) {
     marketData.update((current) => {
-        if (current[symbol] && timeframes.includes(kline.i as Timeframe)) {
-            const timeframe = kline.i as Timeframe;
+        const timeframe = kline.i;
+        if (current[symbol] &&
+            ((shortTimeframes as readonly string[]).includes(timeframe) ||
+                (longTimeframes as readonly string[]).includes(timeframe))) {
             const open = parseFloat(kline.o);
             const close = parseFloat(kline.c);
             const percentChange = ((close - open) / open) * 100;
 
-            current[symbol][timeframe] = percentChange.toFixed(2);
-            current[symbol].lastPrice = close;
+            const data = current[symbol];
+            if (timeframe in data) {
+                (data[timeframe as keyof typeof data] as string | null) = percentChange.toFixed(2);
+                data.lastPrice = close;
+            }
         }
         return current;
     });
