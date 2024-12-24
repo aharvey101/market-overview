@@ -9,41 +9,34 @@
 		sortPairs,
 		getColorClass,
 		fetchPairData,
-		type SortOption
+		type SortOption,
+		type Timeframe
 	} from '$lib/marketData';
+	import type { TimeframeData } from '../routes/types';
 
 	let currentSort: SortOption = 'symbol';
 	let containerHeight: number;
 	let scrollTop = 0;
 	let showLongTimeframes = false;
+	let showSignificantMovers = false;
 	const ROW_HEIGHT = 28;
 	const BUFFER_SIZE = 200;
 	let loadedPairs = new Set<string>();
 
 	$: activeTimeframes = showLongTimeframes ? longTimeframes : shortTimeframes;
 
-	onMount(() => {
-		initializeWebSockets(false);
-	});
+	$: filteredPairs = showSignificantMovers
+		? Object.entries($marketData).filter((entry): entry is [string, TimeframeData] => {
+				const [_, data] = entry as [string, TimeframeData];
+				const sortTimeframe = String(currentSort).replace('-desc', '');
+				if (sortTimeframe === 'symbol') return true;
+				const change = parseFloat(data[sortTimeframe as keyof TimeframeData] || '0');
+				return Math.abs(change) >= 5;
+			})
+		: Object.entries($marketData);
 
-	onDestroy(() => {
-		closeWebSockets();
-	});
+	$: sortedPairs = sortPairs(filteredPairs, currentSort);
 
-	async function toggleTimeframes() {
-		showLongTimeframes = !showLongTimeframes;
-		if (showLongTimeframes) {
-			await initializeWebSockets(true);
-			// Clear loaded pairs to trigger reload on scroll
-			loadedPairs.clear();
-		} else {
-			loadedPairs.clear();
-		}
-	}
-
-	$: sortedPairs = sortPairs(Object.entries($marketData), currentSort);
-	$: totalHeight = sortedPairs.length * ROW_HEIGHT;
-	$: visibleRows = Math.ceil(containerHeight / ROW_HEIGHT);
 	$: startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER_SIZE);
 	$: endIndex = Math.min(
 		sortedPairs.length,
@@ -59,9 +52,28 @@
 		});
 	}
 
+	onMount(() => {
+		initializeWebSockets(false);
+	});
+
+	onDestroy(() => {
+		closeWebSockets();
+	});
+
+	async function toggleTimeframes() {
+		showLongTimeframes = !showLongTimeframes;
+		if (showLongTimeframes) {
+			await initializeWebSockets(true);
+			loadedPairs.clear();
+		} else {
+			loadedPairs.clear();
+		}
+	}
+
 	function downloadMovers(timeframe: string) {
 		const significantPairs = Object.entries($marketData)
-			.filter(([_, data]) => {
+			.filter((entry): entry is [string, TimeframeData] => {
+				const [_, data] = entry;
 				const change = parseFloat(data[timeframe] || '0');
 				return Math.abs(change) >= 5;
 			})
@@ -102,6 +114,12 @@
 				class="rounded border bg-gray-500 px-2 py-1 text-xs text-white hover:bg-gray-600"
 			>
 				{showLongTimeframes ? 'Show Short Timeframes' : 'Show Long Timeframes'}
+			</button>
+			<button
+				on:click={() => (showSignificantMovers = !showSignificantMovers)}
+				class="rounded border bg-yellow-500 px-2 py-1 text-xs text-white hover:bg-yellow-600"
+			>
+				{showSignificantMovers ? 'Show All Pairs' : 'Show ±5% Only'}
 			</button>
 			{#each activeTimeframes as timeframe}
 				<button
